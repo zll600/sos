@@ -5,36 +5,28 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-//
 // Test the list-function returns sensible results.
-//
 func TestList(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, _ := ioutil.TempDir("tmp", "prefix")
-	os.RemoveAll(p)
-	p, _ = ioutil.TempDir("tmp", "prefix")
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class
 	//
-	var STORAGE StorageHandler
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storage := new(FilesystemStorage)
+	storage.Setup(p)
 
 	//
 	// Get the list of entries, which should be empty
 	//
-	list := STORAGE.Existing()
+	list := storage.Existing()
 
 	//
 	// To start with our storage-path will be empty.
@@ -52,11 +44,10 @@ func TestList(t *testing.T) {
 	// Create each one.
 	//
 	for _, id := range files {
-
 		//
 		// By default these will not exist.
 		//
-		if STORAGE.Exists(id) {
+		if storage.Exists(id) {
 			t.Errorf("Exists(missing-file) succeeded!")
 		}
 
@@ -65,12 +56,12 @@ func TestList(t *testing.T) {
 		//
 		path := filepath.Join(p, id)
 		content := []byte("File Content Here")
-		ioutil.WriteFile(path, content, 0644)
+		_ = os.WriteFile(path, content, 0644)
 
 		//
 		// WHich should mean they exist.
 		//
-		if !STORAGE.Exists(id) {
+		if !storage.Exists(id) {
 			t.Errorf("Failed to detect newly-created file")
 		}
 	}
@@ -78,7 +69,7 @@ func TestList(t *testing.T) {
 	//
 	// Get the updated entries beneath our storage-prefix.
 	//
-	list = STORAGE.Existing()
+	list = storage.Existing()
 
 	//
 	// We should have exactly as many as in our list of filenames.
@@ -90,27 +81,21 @@ func TestList(t *testing.T) {
 	//
 	// Cleanup
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }
 
-//
 // Test the retrival-function returns sensible results.
-//
 func TestGet(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, _ := ioutil.TempDir("tmp", "prefix")
-	os.RemoveAll(p)
-	p, _ = ioutil.TempDir("tmp", "prefix")
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class
 	//
-	var STORAGE StorageHandler
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storage := new(FilesystemStorage)
+	storage.Setup(p)
 
 	//
 	// We're going to create a couple of new files,
@@ -122,23 +107,20 @@ func TestGet(t *testing.T) {
 	// Create each one.
 	//
 	for _, id := range files {
-
 		//
 		// Create the file.
 		//
 		path := filepath.Join(p, id)
 		content := []byte(id)
-		ioutil.WriteFile(path, content, 0644)
-
+		_ = os.WriteFile(path, content, 0644)
 	}
 
 	//
 	// Now for each file attempt to retrieve the content
 	//
 	for _, id := range files {
-
-		content, _ := STORAGE.Get(id)
-		stringContent := fmt.Sprintf("%s", *content)
+		content, _ := storage.Get(id)
+		stringContent := string(*content)
 
 		if stringContent != id {
 			t.Errorf("Content of '%s' was not '%s'",
@@ -149,27 +131,21 @@ func TestGet(t *testing.T) {
 	//
 	// Cleanup
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }
 
-//
 // Test the storage-function returns sensible results.
-//
 func TestStore(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, _ := ioutil.TempDir("tmp", "prefix")
-	os.RemoveAll(p)
-	p, _ = ioutil.TempDir("tmp", "prefix")
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class
 	//
-	var STORAGE StorageHandler
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storage := new(FilesystemStorage)
+	storage.Setup(p)
 
 	//
 	// We're going to create a couple of new files,
@@ -181,7 +157,6 @@ func TestStore(t *testing.T) {
 	// Create each one.
 	//
 	for _, id := range files {
-
 		//
 		// Meta-Data
 		//
@@ -191,26 +166,26 @@ func TestStore(t *testing.T) {
 		//
 		// File won't exist
 		//
-		if STORAGE.Exists(id) {
+		if storage.Exists(id) {
 			t.Errorf("Exists(missing-file) succeeded!")
 		}
 
 		//
 		// Store it
 		//
-		STORAGE.Store(id, []byte(id), meta)
+		storage.Store(id, []byte(id), meta)
 
 		//
 		// Now it should be present
 		//
-		if !STORAGE.Exists(id) {
+		if !storage.Exists(id) {
 			t.Errorf("Exists(missing-file) succeeded!")
 		}
 
 		//
 		// Retrieve it to ensure the meta-data matches
 		//
-		_, metaOut := STORAGE.Get(id)
+		_, metaOut := storage.Get(id)
 		if metaOut["filename"] != meta["filename"] {
 			t.Errorf("meta-data mismatch after round-trip!")
 		}
@@ -219,5 +194,5 @@ func TestStore(t *testing.T) {
 	//
 	// Cleanup
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }

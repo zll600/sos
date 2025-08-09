@@ -11,21 +11,19 @@ import (
 	"runtime"
 )
 
-//
-// modified during testing
-//
-var out io.Writer = os.Stdout
-
 var (
 	version = "unreleased"
 )
 
-//
-// Show the version - using the "out"-writer.
-//
+// Show the version - using the provided writer.
 func showVersion(options versionCmd) {
-	fmt.Fprintf(out, "%s\n", version)
+	showVersionWithWriter(options, os.Stdout)
+}
+
+// showVersionWithWriter shows the version using the specified writer.
+func showVersionWithWriter(options versionCmd, writer io.Writer) {
+	_, _ = fmt.Fprintf(writer, "%s\n", version)
 	if options.verbose {
-		fmt.Fprintf(out, "Built with %s\n", runtime.Version())
+		_, _ = fmt.Fprintf(writer, "Built with %s\n", runtime.Version())
 	}
 }

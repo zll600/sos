@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package main
@@ -10,5 +11,5 @@ import (
 //
 // This is not implemented for Windows.
 func SOSChroot(directory string) {
-	syscall.Chroot(directory)
+	_ = syscall.Chroot(directory)
 }

@@ -1,13 +1,9 @@
-//
 // Simple testing of the blob-server
-//
-//
 package main
 
 import (
 	"bytes"
-	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,10 +14,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
-//
 // Upload IDs must be alphanumeric.  Submit some bogus requests to
 // ensure they fail with a suitable error-message.
-//
 func TestGetIDNames(t *testing.T) {
 	router := mux.NewRouter()
 	router.HandleFunc("/blob/{id}/", GetHandler).Methods("GET")
@@ -34,8 +28,7 @@ func TestGetIDNames(t *testing.T) {
 	ids := []string{"/blob/xXx", "/blob/34l'", "/blob/a-b-c", "/blob/<fdf>"}
 
 	for _, id := range ids {
-
-		req, err := http.NewRequest("GET", id, nil)
+		req, err := http.NewRequest(http.MethodGet, id, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,9 +50,7 @@ func TestGetIDNames(t *testing.T) {
 	}
 }
 
-//
 // Test that our health end-point returns an alive-response.
-//
 func TestHealth(t *testing.T) {
 	router := mux.NewRouter()
 	router.HandleFunc("/alive/", HealthHandler).Methods("GET")
@@ -68,8 +59,7 @@ func TestHealth(t *testing.T) {
 	ids := []string{"/alive", "/alive/"}
 
 	for _, id := range ids {
-
-		req, err := http.NewRequest("GET", id, nil)
+		req, err := http.NewRequest(http.MethodGet, id, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,24 +81,19 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-//
 // Test HEAD access to a file before/after it is created.
-//
 func TestHeadAccess(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/blob/{id}/", GetHandler).Methods("HEAD")
@@ -121,11 +106,10 @@ func TestHeadAccess(t *testing.T) {
 	ids := []string{"/blob/foo", "/blob/foo/"}
 
 	for _, id := range ids {
-
 		var req *http.Request
-		req, err = http.NewRequest("HEAD", id, nil)
-		if err != nil {
-			t.Fatal(err)
+		req, reqErr := http.NewRequest(http.MethodHead, id, nil)
+		if reqErr != nil {
+			t.Fatal(reqErr)
 		}
 
 		rr := httptest.NewRecorder()
@@ -142,19 +126,17 @@ func TestHeadAccess(t *testing.T) {
 	//
 	path := filepath.Join(p, "foo")
 	content := []byte("Content")
-	err = ioutil.WriteFile(path, content, 0644)
-	if err != nil {
-		fmt.Printf("Error writing content beneath our temporary directory %s", err.Error())
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Errorf("Error writing content beneath our temporary directory: %v", err)
 	}
 
 	//
 	// And repeat the accesses - we should have success now.
 	//
 	for _, id := range ids {
-
-		req, err := http.NewRequest("HEAD", id, nil)
-		if err != nil {
-			t.Fatal(err)
+		req, reqErr := http.NewRequest(http.MethodHead, id, nil)
+		if reqErr != nil {
+			t.Fatal(reqErr)
 		}
 
 		rr := httptest.NewRecorder()
@@ -169,27 +151,24 @@ func TestHeadAccess(t *testing.T) {
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
+	if rmErr := os.RemoveAll(p); rmErr != nil {
+		t.Errorf("Failed to remove temporary directory %s", rmErr.Error())
+	}
 }
 
-//
 // Test that retrieving a missing blob fails appropriately.
-//
 func TestMissingBlob(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/blob/{id}/", GetHandler).Methods("GET")
@@ -202,10 +181,9 @@ func TestMissingBlob(t *testing.T) {
 	ids := []string{"/blob/919aac866fb1fb107616a5e3824efc91aacb3be1", "/blob/8b55aac644e9e6f2701805584cc391ff81d3ecec"}
 
 	for _, id := range ids {
-
-		req, err := http.NewRequest("GET", id, nil)
-		if err != nil {
-			t.Fatal(err)
+		req, reqErr := http.NewRequest(http.MethodGet, id, nil)
+		if reqErr != nil {
+			t.Fatal(reqErr)
 		}
 
 		rr := httptest.NewRecorder()
@@ -227,27 +205,22 @@ func TestMissingBlob(t *testing.T) {
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }
 
-//
-// Test the blob-list
-//
+// Test the blob-list.
 func TestBlobList(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/blobs", ListHandler).Methods("GET")
@@ -255,7 +228,7 @@ func TestBlobList(t *testing.T) {
 	//
 	// Nothing uploaded so we should get "[]"
 	//
-	req, err := http.NewRequest("GET", "/blobs", nil)
+	req, err := http.NewRequest(http.MethodGet, "/blobs", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,12 +254,14 @@ func TestBlobList(t *testing.T) {
 	//
 	path := filepath.Join(p, "steve")
 	content := []byte("Content")
-	ioutil.WriteFile(path, content, 0644)
+	if writeErr := os.WriteFile(path, content, 0644); writeErr != nil {
+		t.Errorf("Failed to write file %s", writeErr.Error())
+	}
 
 	//
 	// At this point we should get a single result.
 	//
-	req, err = http.NewRequest("GET", "/blobs", nil)
+	req, err = http.NewRequest(http.MethodGet, "/blobs", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,27 +284,22 @@ func TestBlobList(t *testing.T) {
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }
 
-//
 // Test uploading a file.
-//
 func TestBlobUpload(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	//
 	// Prepare the handler
@@ -356,8 +326,8 @@ func TestBlobUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
 		t.Errorf("Failed to read response-body %v\n", err)
@@ -374,7 +344,7 @@ func TestBlobUpload(t *testing.T) {
 	// Get the result of the upload, which is a JSON string
 	// which should contain:  "status":"OK"
 	//
-	result := fmt.Sprintf("%s", body)
+	result := string(body)
 
 	//
 	// Test that it does contain that.
@@ -386,34 +356,29 @@ func TestBlobUpload(t *testing.T) {
 	//
 	// Now the file should exist
 	//
-	if !STORAGE.Exists("123456") {
+	if !getStorage().Exists("123456") {
 		t.Errorf("Exists('123456') failed, post-upload!")
 	}
 
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
-
+	_ = os.RemoveAll(p)
 }
 
-//
-// Test uploading a file with a bogus ID
-//
+// Test uploading a file with a bogus ID.
 func TestBlobUploadBogusID(t *testing.T) {
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	//
 	// Prepare the handler
@@ -440,14 +405,14 @@ func TestBlobUploadBogusID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
 		t.Errorf("Failed to read response-body %v\n", err)
 	}
 
-	red := fmt.Sprintf("%s", body)
+	red := string(body)
 
 	if status := resp.StatusCode; status != http.StatusInternalServerError {
 		t.Errorf("Unexpected status-code: %v", status)
@@ -460,27 +425,22 @@ func TestBlobUploadBogusID(t *testing.T) {
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
+	_ = os.RemoveAll(p)
 }
 
-//
 // Test a round-trip of upload & download.
-//
 func TestBlobRoundTrip(t *testing.T) {
-
 	//
 	// Create a temporary directory.
 	//
-	p, err := ioutil.TempDir("tmp", "prefix")
-	if err != nil {
-		t.Errorf("Failed to create temporary directory %s", err.Error())
-	}
+	p := t.TempDir()
 
 	//
 	// Init the filesystem storage-class - defined in `cmd_blob_server.go`
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(p)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(p)
+	setStorage(storageHandler)
 
 	//
 	// Prepare the handlers for upload & download
@@ -504,7 +464,7 @@ func TestBlobRoundTrip(t *testing.T) {
 	//
 	// Before the upload the file won't exist.
 	//
-	if STORAGE.Exists(filename) {
+	if getStorage().Exists(filename) {
 		t.Errorf("Exists() was true, pre-upload")
 	}
 
@@ -520,7 +480,10 @@ func TestBlobRoundTrip(t *testing.T) {
 	// This is done via the X-Mime-Type header.
 	//
 	client := &http.Client{}
-	req, err := http.NewRequest("POST", url, bytes.NewReader(bcontent))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(bcontent))
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Add("X-Mime-Type", "binary/steve")
 	req.Header.Add("X-File-Name", filename)
 	resp, err := client.Do(req)
@@ -528,8 +491,8 @@ func TestBlobRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
 
 	//
 	// If we received an error then we're done.
@@ -549,7 +512,7 @@ func TestBlobRoundTrip(t *testing.T) {
 	// Get the result of the upload, which is a JSON string
 	// which should contain:  "status":"OK"
 	//
-	result := fmt.Sprintf("%s", body)
+	result := string(body)
 	if !strings.Contains(result, "\"status\":\"OK\"") {
 		t.Fatalf("Unexpected body: '%s'", result)
 	}
@@ -557,7 +520,7 @@ func TestBlobRoundTrip(t *testing.T) {
 	//
 	// Now the file should exist in the storage-directory
 	//
-	if !STORAGE.Exists(filename) {
+	if !getStorage().Exists(filename) {
 		t.Errorf("Exists('') failed, post-upload!")
 	}
 
@@ -570,7 +533,7 @@ func TestBlobRoundTrip(t *testing.T) {
 	// We need to download it
 	//
 	//
-	req, err = http.NewRequest("GET", "/blob/"+filename, nil)
+	req, err = http.NewRequest(http.MethodGet, "/blob/"+filename, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,13 +568,10 @@ func TestBlobRoundTrip(t *testing.T) {
 	//
 	// Cleanup the storage-point
 	//
-	os.RemoveAll(p)
-
+	_ = os.RemoveAll(p)
 }
 
-//
 // Test our 404-handler (!)
-//
 func TestMissing(t *testing.T) {
 	router := mux.NewRouter()
 	router.PathPrefix("/").HandlerFunc(MissingHandler)
@@ -622,14 +582,12 @@ func TestMissing(t *testing.T) {
 	methods := []string{"GET", "POST", "HEAD"}
 
 	for _, method := range methods {
-
 		//
 		// Each of the paths we test
 		//
 		paths := []string{"/robots.txt", "/favicon.ico", "/moi.kissa"}
 
 		for _, path := range paths {
-
 			req, err := http.NewRequest(method, path, nil)
 			if err != nil {
 				t.Fatal(err)

@@ -10,20 +10,32 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
 )
 
-// STORAGE holds a handle to our selected storage-method.
-var STORAGE StorageHandler
+// storage holds a handle to our selected storage-method.
+var storage StorageHandler
+
+// setStorage stores the storage handler for use by handlers.
+func setStorage(s StorageHandler) {
+	storage = s
+}
+
+// getStorage returns the current storage handler.
+func getStorage() StorageHandler {
+	return storage
+}
 
 // HealthHandler is a status end-point which can be polled remotely
 // to test health.
-func HealthHandler(res http.ResponseWriter, req *http.Request) {
-	res.Write([]byte("alive"))
+func HealthHandler(res http.ResponseWriter, _ *http.Request) {
+	_, _ = res.Write([]byte("alive"))
 }
 
 // GetHandler allows a blob to be retrieved by name.
@@ -52,7 +64,7 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 	// will have failed if we were not launched by root, so
 	// we need to make sure we avoid directory-traversal attacks.
 	//
-	r, _ := regexp.Compile("^([a-z0-9]+)$")
+	r := regexp.MustCompile("^([a-z0-9]+)$")
 	if !r.MatchString(id) {
 		status = http.StatusInternalServerError
 		err = errors.New("alphanumeric IDs only")
@@ -66,11 +78,10 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 	//  We'll terminate early and just return the status-code
 	// 200 vs. 404.
 	//
-	if req.Method == "HEAD" {
+	if req.Method == http.MethodHead {
 		res.Header().Set("Connection", "close")
 
-		if STORAGE.Exists(id) {
-		} else {
+		if !getStorage().Exists(id) {
 			res.WriteHeader(http.StatusNotFound)
 		}
 		return
@@ -80,7 +91,7 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 	// If we reached this point then the request was a GET
 	// so we lookup the data, returning it if present.
 	//
-	data, meta := STORAGE.Get(id)
+	data, meta := getStorage().Get(id)
 
 	//
 	// The data was missing..
@@ -88,13 +99,11 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 	if data == nil {
 		http.NotFound(res, req)
 	} else {
-
 		//
 		// The meta-data will be used to populate the HTTP-response
 		// headers.
 		//
 		for k, v := range meta {
-
 			//
 			// Special case to set the content-type
 			// of the returned value.
@@ -109,25 +118,26 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 			//
 			res.Header().Set(k, v)
 		}
-		io.Copy(res, bytes.NewReader(*data))
+		if _, copyErr := io.Copy(res, bytes.NewReader(*data)); copyErr != nil {
+			panic(copyErr)
+		}
 	}
 }
 
 // MissingHandler is a handler which is used as a fall-back if no matching
 // handler is found.
-func MissingHandler(res http.ResponseWriter, req *http.Request) {
+func MissingHandler(res http.ResponseWriter, _ *http.Request) {
 	res.WriteHeader(http.StatusNotFound)
-	fmt.Fprintf(res, "404 - content is not hosted here.")
+	if _, err := res.Write([]byte("404 - content is not hosted here.")); err != nil {
+		panic(err)
+	}
 }
 
 // ListHandler returns the IDs of all blobs we know about.
 //
 // This is used by the replication utility.
-func ListHandler(res http.ResponseWriter, req *http.Request) {
-
-	var list []string
-
-	list = STORAGE.Existing()
+func ListHandler(res http.ResponseWriter, _ *http.Request) {
+	list := getStorage().Existing()
 
 	//
 	// If the list is non-empty then build up an array
@@ -135,9 +145,9 @@ func ListHandler(res http.ResponseWriter, req *http.Request) {
 	//
 	if len(list) > 0 {
 		mapB, _ := json.Marshal(list)
-		res.Write(mapB)
+		_, _ = res.Write(mapB)
 	} else {
-		res.Write([]byte("[]"))
+		_, _ = res.Write([]byte("[]"))
 	}
 }
 
@@ -168,7 +178,7 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	// Ensure the ID is entirely alphanumeric, to prevent
 	// traversal attacks.
 	//
-	r, _ := regexp.Compile("^([a-z0-9]+)$")
+	r := regexp.MustCompile("^([a-z0-9]+)$")
 	if !r.MatchString(id) {
 		err = errors.New("alphanumeric IDs only")
 		status = http.StatusInternalServerError
@@ -201,7 +211,7 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	//
 	// Store the body, via our interface.
 	//
-	if ok := STORAGE.Store(id, content, extras); !ok {
+	if ok := getStorage().Store(id, content, extras); !ok {
 		err = errors.New("failed to write to storage")
 		status = http.StatusInternalServerError
 		return
@@ -216,13 +226,11 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	//  }
 	//
 	out := fmt.Sprintf("{\"id\":\"%s\",\"status\":\"OK\",\"size\":%d}", id, len(content))
-	res.Write([]byte(out))
-
+	_, _ = res.Write([]byte(out))
 }
 
 // blobServer is our entry-point to the sub-command.
 func blobServer(options blobServerCmd) {
-
 	//
 	// Create a storage system.
 	//
@@ -230,8 +238,9 @@ func blobServer(options blobServerCmd) {
 	// class.  In the future it is possible we'd have more, and we'd
 	// choose between them via a command-line flag.
 	//
-	STORAGE = new(FilesystemStorage)
-	STORAGE.Setup(options.store)
+	storageHandler := new(FilesystemStorage)
+	storageHandler.Setup(options.store)
+	setStorage(storageHandler)
 
 	//
 	// Create a new router and our route-mappings.
@@ -248,11 +257,19 @@ func blobServer(options blobServerCmd) {
 	//
 	// Launch the server
 	//
-	fmt.Printf("blob-server available at http://%s:%d/\nUploads will be written beneath: %s\n",
-		options.host, options.port, options.store)
-	err := http.ListenAndServe(fmt.Sprintf("%s:%d", options.host, options.port), nil)
+	GetLogger().Info("blob-server starting",
+		"url", "http://"+net.JoinHostPort(options.host, strconv.Itoa(options.port))+"/",
+		"storage_path", options.store)
+
+	server := &http.Server{
+		Addr:         net.JoinHostPort(options.host, strconv.Itoa(options.port)),
+		Handler:      nil,
+		ReadTimeout:  serverReadTimeout,
+		WriteTimeout: serverWriteTimeout,
+		IdleTimeout:  serverIdleTimeout,
+	}
+	err := server.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
-
 }

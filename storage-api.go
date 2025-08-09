@@ -21,7 +21,6 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,15 +76,12 @@ type FilesystemStorage struct {
 	prefix string
 }
 
-//
 // Setup method to ensure we have a data-directory.
-//
 func (fss *FilesystemStorage) Setup(connection string) {
-
 	//
 	// If the data-directory does not exist create it.
 	//
-	os.MkdirAll(connection, 0755)
+	_ = os.MkdirAll(connection, 0750)
 
 	//
 	// We default to changing to the directory and chrooting
@@ -101,7 +97,7 @@ func (fss *FilesystemStorage) Setup(connection string) {
 	//
 	// Now try to secure ourselves
 	//
-	syscall.Chdir(connection)
+	_ = syscall.Chdir(connection)
 
 	//
 	// If we're running our test-cases we don't chroot.
@@ -113,20 +109,16 @@ func (fss *FilesystemStorage) Setup(connection string) {
 	// upon the current working directory.
 	//
 	fss.cwd = true
-
 }
 
-//
 // Get the contents of a given ID.
-//
 func (fss *FilesystemStorage) Get(id string) (*[]byte, map[string]string) {
-
 	//
 	// If we're not using the cwd we need to build up the complete
 	// path to the file.
 	//
 	target := id
-	if fss.cwd == false {
+	if !fss.cwd {
 		target = filepath.Join(fss.prefix, id)
 	}
 
@@ -140,7 +132,7 @@ func (fss *FilesystemStorage) Get(id string) (*[]byte, map[string]string) {
 	//
 	// Read the file contents
 	//
-	x, err := ioutil.ReadFile(target)
+	x, err := os.ReadFile(target)
 
 	// If there was an error return nil too.
 	if err != nil {
@@ -155,13 +147,13 @@ func (fss *FilesystemStorage) Get(id string) (*[]byte, map[string]string) {
 	//
 	// Attempt to read the meta-data file.
 	//
-	metaData, err := ioutil.ReadFile(target + ".json")
+	metaData, err := os.ReadFile(target + ".json")
 
 	//
 	// If we did then we can decode it
 	//
 	if err == nil {
-		json.Unmarshal([]byte(metaData), &meta)
+		_ = json.Unmarshal(metaData, &meta)
 		return &x, meta
 	}
 
@@ -172,24 +164,21 @@ func (fss *FilesystemStorage) Get(id string) (*[]byte, map[string]string) {
 	return &x, nil
 }
 
-//
 // Store the specified data against the given file.
-//
 func (fss *FilesystemStorage) Store(id string, data []byte, params map[string]string) bool {
-
 	//
 	// If we're not using the cwd we need to build up the complete
 	// path to the file.
 	//
 	target := id
-	if fss.cwd == false {
+	if !fss.cwd {
 		target = filepath.Join(fss.prefix, id)
 	}
 
 	//
 	// Write out the data.
 	//
-	err := ioutil.WriteFile(target, data, 0644)
+	err := os.WriteFile(target, data, 0600)
 
 	//
 	// If there was an error we abort.
@@ -203,21 +192,20 @@ func (fss *FilesystemStorage) Store(id string, data []byte, params map[string]st
 	// out too.
 	//
 	if len(params) != 0 {
-
 		// Marshal to JSON.
-		encoded, err := json.Marshal(params)
+		encoded, marshalErr := json.Marshal(params)
 
 		//
 		// If there was an error marshalling the meta-data
 		// then our upload failed, even though the data
 		// was stored already..
 		//
-		if err != nil {
+		if marshalErr != nil {
 			return false
 		}
 
 		// Write out to a .json-suffixed file.
-		err = ioutil.WriteFile(target+".json", encoded, 0644)
+		err = os.WriteFile(target+".json", encoded, 0600)
 
 		// If the data was saved but the meta-data wasn't
 		// this is still a failure.
@@ -238,7 +226,6 @@ func (fss *FilesystemStorage) Store(id string, data []byte, params map[string]st
 //
 // We assume we've been chdir() + chroot() into the data-directory
 // so we just need to read the filenames we can find.
-//
 func (fss *FilesystemStorage) Existing() []string {
 	var list []string
 
@@ -246,11 +233,11 @@ func (fss *FilesystemStorage) Existing() []string {
 	// If we're not using the cwd we need to use our prefix, explicitly
 	//
 	target := "."
-	if fss.cwd == false {
+	if !fss.cwd {
 		target = fss.prefix
 	}
 
-	files, _ := ioutil.ReadDir(target)
+	files, _ := os.ReadDir(target)
 	for _, f := range files {
 		name := f.Name()
 
@@ -263,13 +250,12 @@ func (fss *FilesystemStorage) Existing() []string {
 
 // Exists tests whether the given ID exists (as a file).
 func (fss *FilesystemStorage) Exists(id string) bool {
-
 	//
 	// If we're not using the cwd we need to build up the complete
 	// path to the file.
 	//
 	target := id
-	if fss.cwd == false {
+	if !fss.cwd {
 		target = filepath.Join(fss.prefix, id)
 	}
 

@@ -39,29 +39,22 @@ import (
 //
 // The blob-server has:
 //
-//  *  A location (host:port).
-//  *  A group to which it belongs.
-//
+//   - A location (host:port).
+//   - A group to which it belongs.
 type BlobServer struct {
 	Location string
 	Group    string
 }
 
-//
 // The list of servers we've identified.
-//
 var servers []BlobServer
 
-//
 // Servers returns the list of servers we've discovered.
-//
 func Servers() []BlobServer {
 	return (servers)
 }
 
-//
 // Groups returns the name of each group we have defined.
-//
 func Groups() []string {
 	groups := []string{}
 	for _, entry := range servers {
@@ -71,17 +64,14 @@ func Groups() []string {
 				found = true
 			}
 		}
-		if found == false {
+		if !found {
 			groups = append(groups, entry.Group)
-
 		}
 	}
 	return (groups)
 }
 
-//
-// GroupMembers returns the members of the given group
-//
+// GroupMembers returns the members of the given group.
 func GroupMembers(group string) []BlobServer {
 	ret := []BlobServer{}
 
@@ -91,10 +81,8 @@ func GroupMembers(group string) []BlobServer {
 		}
 	}
 	return (ret)
-
 }
 
-//
 // OrderedServers returns a priority-ordered list of servers which will be used
 // for uploads/downloads.
 //
@@ -102,28 +90,28 @@ func GroupMembers(group string) []BlobServer {
 // server from each group, then the second server from each group, etc, etc.
 //
 // Given input
-//  group:1 host:host1
-//  group:1 host:host2
-//  group:2 host:host1
-//  group:2 host:host2
-//  group:3 host:host1
-//  group:3 host:host2
-//  group:3 host:host3
+//
+//	group:1 host:host1
+//	group:1 host:host2
+//	group:2 host:host1
+//	group:2 host:host2
+//	group:3 host:host1
+//	group:3 host:host2
+//	group:3 host:host3
 //
 // The output should be:
 //
-//  group:1 host1
-//  group:2 host1
-//  group:3 host1
-//  group:1 host2
-//  group:2 host2
-//  group:3 host2
-//  group:3 host3
+//	group:1 host1
+//	group:2 host1
+//	group:3 host1
+//	group:1 host2
+//	group:2 host2
+//	group:3 host2
+//	group:3 host3
 //
 // This means we take three accesses to hit a server in each group, rather
 // than five.  Similar savings will add up when there are more groups and
 // servers.
-//
 func OrderedServers() []BlobServer {
 	var res []BlobServer
 
@@ -152,7 +140,6 @@ func OrderedServers() []BlobServer {
 	//  NOTE: Dummy loop index.
 	//
 	for processed != 0 {
-
 		//
 		// Have we seen the given group on this loop?
 		//
@@ -162,12 +149,10 @@ func OrderedServers() []BlobServer {
 		// For each server
 		//
 		for o, entry := range tmp {
-
 			//
 			// If this is the first time we've seen this group
 			//
 			if (!seen[entry.Group]) && (entry.Location != "#") {
-
 				// Record we've seen it now.
 				seen[entry.Group] = true
 
@@ -187,31 +172,25 @@ func OrderedServers() []BlobServer {
 	return (res)
 }
 
-//
-// InitServers inititalizes our list of servers.
-//
+// InitServers initializes our list of servers.
 func InitServers() {
 	ServersLoad("/etc/sos.conf")
 	ServersLoad(os.ExpandEnv("$HOME/.sos.conf"))
 }
 
-//
 // AddServer adds an entry to our server-list.
-//
 func AddServer(group string, entry string) {
 	tmp := BlobServer{Location: entry, Group: group}
 	servers = append(servers, tmp)
 }
 
-//
 // ServersLoad reads/parses the list of servers from the specified file.
-//
 func ServersLoad(file string) {
 	inFile, err := os.Open(file)
 	if err != nil {
 		return
 	}
-	defer inFile.Close()
+	defer func() { _ = inFile.Close() }()
 
 	//
 	// Here we temporarily save the servers we've found.
@@ -259,9 +238,9 @@ func ServersLoad(file string) {
 		//
 		// Parse it as an INI-file
 		//
-		cfg, err := ini.Load(file)
-		if err != nil {
-			panic(err)
+		cfg, loadErr := ini.Load(file)
+		if loadErr != nil {
+			panic(loadErr)
 		}
 
 		//
@@ -269,16 +248,13 @@ func ServersLoad(file string) {
 		//
 		sections := cfg.Sections()
 		for _, name := range sections {
-
 			if name.Name() != "DEFAULT" {
-
 				//
 				//  Get the keys.
 				//
 				keys := cfg.Section(name.Name()).Keys()
 
 				for _, val := range keys {
-
 					//
 					// For each entry add to the server-list.
 					//
@@ -287,7 +263,6 @@ func ServersLoad(file string) {
 			}
 		}
 		return
-
 	}
 
 	//

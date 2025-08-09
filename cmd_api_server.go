@@ -6,11 +6,14 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha1"
+	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -18,13 +21,22 @@ import (
 	"github.com/skx/sos/libconfig"
 )
 
-// OPTIONS holds options passed to this sub-command, so that we can later
+// apiOptions holds options passed to this sub-command, so that we can later
 // test if `-verbose` is in-force.
-var OPTIONS apiServerCmd
+var apiOptions apiServerCmd
+
+// setAPIOptions stores the API server options for use by handlers.
+func setAPIOptions(opts apiServerCmd) {
+	apiOptions = opts
+}
+
+// getAPIOptions returns the current API server options.
+func getAPIOptions() apiServerCmd {
+	return apiOptions
+}
 
 // Start the upload/download servers running.
 func apiServer(options apiServerCmd) {
-
 	//
 	// If we received blob-servers on the command-line use them too.
 	//
@@ -37,7 +49,6 @@ func apiServer(options apiServerCmd) {
 			libconfig.AddServer("default", entry)
 		}
 	} else {
-
 		//
 		//  Initialize the servers from our config file(s).
 		//
@@ -48,31 +59,38 @@ func apiServer(options apiServerCmd) {
 	// If we're merely dumping the servers then do so now.
 	//
 	if options.dump {
-		fmt.Printf("\t% 10s - %s\n", "group", "server")
+		GetLogger().Info("Blob servers", "group", "group", "server", "server")
 		for _, entry := range libconfig.Servers() {
-			fmt.Printf("\t% 10s - %s\n", entry.Group, entry.Location)
+			GetLogger().Info("Blob server entry", "group", entry.Group, "location", entry.Location)
 		}
 		return
 	}
 
-	OPTIONS = options
+	// Store options for later use by handlers
+	setAPIOptions(options)
 
 	//
 	// Otherwise show a banner, then launch the server-threads.
 	//
-	fmt.Printf("[Launching API-server]\n")
-	fmt.Printf("\nUpload service\nhttp://%s:%d/upload\n", options.host, options.uport)
-	fmt.Printf("\nDownload service\nhttp://%s:%d/fetch/:id\n", options.host, options.dport)
+	GetLogger().Info("Launching API-server")
+	GetLogger().Info(
+		"Upload service",
+		"url",
+		"http://"+net.JoinHostPort(options.host, strconv.Itoa(options.uport))+"/upload",
+	)
+	GetLogger().Info(
+		"Download service",
+		"url",
+		"http://"+net.JoinHostPort(options.host, strconv.Itoa(options.dport))+"/fetch/:id",
+	)
 
 	//
 	// Show the blob-servers, and their weights
 	//
-	fmt.Printf("\nBlob-servers:\n")
-	fmt.Printf("\t% 10s - %s\n", "group", "server")
+	GetLogger().Info("Blob-servers:")
 	for _, entry := range libconfig.Servers() {
-		fmt.Printf("\t% 10s - %s\n", entry.Group, entry.Location)
+		GetLogger().Info("Blob server", "group", entry.Group, "location", entry.Location)
 	}
-	fmt.Printf("\n")
 
 	//
 	// Create a route for uploading.
@@ -98,8 +116,14 @@ func apiServer(options apiServerCmd) {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
-		err := http.ListenAndServe(fmt.Sprintf("%s:%d", options.host, options.uport),
-			upRouter)
+		server := &http.Server{
+			Addr:         net.JoinHostPort(options.host, strconv.Itoa(options.uport)),
+			Handler:      upRouter,
+			ReadTimeout:  serverReadTimeout,
+			WriteTimeout: serverWriteTimeout,
+			IdleTimeout:  serverIdleTimeout,
+		}
+		err := server.ListenAndServe()
 		if err != nil {
 			panic(err)
 		}
@@ -107,8 +131,14 @@ func apiServer(options apiServerCmd) {
 	}()
 	wg.Add(1)
 	go func() {
-		err := http.ListenAndServe(fmt.Sprintf("%s:%d", options.host, options.dport),
-			downRouter)
+		server := &http.Server{
+			Addr:         net.JoinHostPort(options.host, strconv.Itoa(options.dport)),
+			Handler:      downRouter,
+			ReadTimeout:  serverReadTimeout,
+			WriteTimeout: serverWriteTimeout,
+			IdleTimeout:  serverIdleTimeout,
+		}
+		err := server.ListenAndServe()
 		if err != nil {
 			panic(err)
 		}
@@ -122,7 +152,7 @@ type myReader struct {
 	*bytes.Buffer
 }
 
-// So that it implements the io.ReadCloser interface
+// So that it implements the io.ReadCloser interface.
 func (m myReader) Close() error { return nil }
 
 // APIUploadHandler handles uploads to the API server.
@@ -142,7 +172,6 @@ func (m myReader) Close() error { return nil }
 // returns the known blob-servers in a suitable order to minimize
 // lookups.  See `SCALING.md` for more details.
 func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
-
 	//
 	// We create a new buffer to hold the request-body.
 	//
@@ -155,11 +184,11 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 	rdr1 := myReader{bytes.NewBuffer(buf)}
 
 	//
-	// Get the SHA1 hash of the uploaded data.
+	// Get the SHA256 hash of the uploaded data.
 	//
-	hasher := sha1.New()
+	hasher := sha256.New()
 	b, _ := io.ReadAll(rdr1)
-	hasher.Write([]byte(b))
+	hasher.Write(b)
 	hash := hasher.Sum(nil)
 
 	//
@@ -170,7 +199,6 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 	// a successful result we'll return it to the caller.
 	//
 	for _, s := range libconfig.OrderedServers() {
-
 		//
 		// Replace the request body with the (second) copy we made.
 		//
@@ -183,9 +211,9 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 		url := fmt.Sprintf("%s%s%x", s.Location, "/blob/", hash)
 
 		//
-		// Build up a new request.
+		// Build up a new request with context.
 		//
-		child, _ := http.NewRequest("POST", url, req.Body)
+		child, _ := http.NewRequestWithContext(req.Context(), http.MethodPost, url, req.Body)
 
 		//
 		// Propagate any incoming X-headers
@@ -201,12 +229,14 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 		//
 		client := &http.Client{}
 		r, err := client.Do(child)
+		if r != nil {
+			defer r.Body.Close()
+		}
 
 		//
 		// If there was no error we're good.
 		//
 		if err == nil {
-
 			//
 			// We read the reply we received from the
 			// blob-server and return it to the caller.
@@ -214,7 +244,9 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 			response, _ := io.ReadAll(r.Body)
 
 			if response != nil {
-				res.Write(response)
+				if _, writeErr := res.Write(response); writeErr != nil {
+					panic(writeErr)
+				}
 				return
 			}
 		}
@@ -227,7 +259,82 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 	// Let the caller know.
 	//
 	res.WriteHeader(http.StatusInternalServerError)
-	res.Write([]byte("{\"error\":\"upload failed\"}"))
+	if _, err := res.Write([]byte("{\"error\":\"upload failed\"}")); err != nil {
+		panic(err)
+	}
+}
+
+// logDownloadError logs error details when verbose mode is enabled.
+func logDownloadError(err error, response *http.Response) {
+	if !getAPIOptions().verbose {
+		return
+	}
+
+	if err != nil {
+		GetLogger().Error("Error fetching", "error", err.Error())
+	} else if response != nil {
+		GetLogger().Warn("Non-200 status code", "status_code", response.StatusCode)
+	}
+}
+
+// handleSuccessfulDownload processes a successful response from a blob server.
+func handleSuccessfulDownload(res http.ResponseWriter, req *http.Request, response *http.Response) bool {
+	body, _ := io.ReadAll(response.Body)
+
+	if body == nil {
+		return false
+	}
+
+	if getAPIOptions().verbose {
+		GetLogger().Info("Found data", "bytes", len(body))
+	}
+
+	// Handle HEAD requests
+	if req.Method == http.MethodHead {
+		res.Header().Set("Connection", "close")
+		res.WriteHeader(http.StatusOK)
+		return true
+	}
+
+	// Copy X-Headers from the response
+	for header, value := range response.Header {
+		if strings.HasPrefix(header, "X-") {
+			res.Header().Set(header, value[0])
+		}
+	}
+
+	// Send back the body
+	if _, copyErr := io.Copy(res, bytes.NewReader(body)); copyErr != nil {
+		panic(copyErr)
+	}
+	return true
+}
+
+// tryDownloadFromServer attempts to download from a single blob server.
+func tryDownloadFromServer(server libconfig.BlobServer, id string, res http.ResponseWriter, req *http.Request) bool {
+	if getAPIOptions().verbose {
+		GetLogger().Info("Attempting retrieval", "url", fmt.Sprintf("%s%s%s", server.Location, "/blob/", id))
+	}
+
+	ctx := context.Background()
+	request, _ := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		fmt.Sprintf("%s%s%s", server.Location, "/blob/", id),
+		nil,
+	)
+	client := &http.Client{}
+	response, err := client.Do(request)
+	if response != nil {
+		defer response.Body.Close()
+	}
+
+	if err != nil || response == nil || response.StatusCode != http.StatusOK {
+		logDownloadError(err, response)
+		return false
+	}
+
+	return handleSuccessfulDownload(res, req, response)
 }
 
 // APIDownloadHandler handles downloads from the API server.
@@ -247,132 +354,31 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 // returns the known blob-servers in a suitable order to minimize
 // lookups.  See `SCALING.md` for more details.
 func APIDownloadHandler(res http.ResponseWriter, req *http.Request) {
-
-	//
-	// The ID of the file we're to retrieve.
-	//
+	// Extract ID from request
 	vars := mux.Vars(req)
 	id := vars["id"]
 
-	//
-	// Strip any extension which might be present on the ID.
-	//
+	// Strip any extension which might be present on the ID
 	extension := filepath.Ext(id)
 	id = id[0 : len(id)-len(extension)]
 
-	//
-	// We try each blob-server in turn, and if/when we receive
-	// a successfully result we'll return it to the caller.
-	//
-	for _, s := range libconfig.OrderedServers() {
-
-		//
-		// Show which back-end we're going to use.
-		//
-		if OPTIONS.verbose {
-			fmt.Printf("Attempting retrieval from %s%s%s\n", s.Location, "/blob/", id)
-		}
-
-		//
-		// Build up the request.
-		//
-		response, err := http.Get(fmt.Sprintf("%s%s%s", s.Location, "/blob/", id))
-		//
-		// If there was no error we're good.
-		//
-		if err != nil || response.StatusCode != 200 {
-
-			//
-			// If there was an error then we skip this server
-			//
-			if err != nil {
-				if OPTIONS.verbose {
-					fmt.Printf("\tError fetching: %s\n", err.Error())
-				}
-			} else {
-
-				//
-				// If there was no error then the HTTP-connection
-				// to the back-end succeeded, but that didn't
-				// return a 200 OK.
-				//
-				// This might happen if a file was uploaded
-				// to only one host, but we've hit another.
-				//
-				// (i.e. Replication is pending.)
-				//
-				if OPTIONS.verbose {
-
-					fmt.Printf("\tStatus Code : %d\n", response.StatusCode)
-				}
-			}
-
-		} else {
-
-			//
-			// We read the reply we received from the
-			// blob-server and return it to the caller.
-			//
-			body, _ := io.ReadAll(response.Body)
-
-			if body != nil {
-
-				//
-				// We found a non-empty result on a back-end
-				// server, so we're going to pipe the data
-				// back.
-				if OPTIONS.verbose {
-					fmt.Printf("\tFound, read %d bytes\n", len(body))
-				}
-
-				//
-				// If we found the file, and the body
-				// was non-empty then we'll return
-				// a HTTP-OK response.
-				//
-				// If the request-method was HEAD
-				// and the file isn't found then the 404-result
-				// at the foot of this function will ensure
-				// that a negative response is sent.
-				//
-				if req.Method == "HEAD" {
-					res.Header().Set("Connection", "close")
-					res.WriteHeader(http.StatusOK)
-					return
-				}
-
-				//
-				// Copy any X-Header which was present
-				// into the reply too.
-				//
-				for header, value := range response.Header {
-					if strings.HasPrefix(header, "X-") {
-						res.Header().Set(header, value[0])
-					}
-				}
-
-				//
-				// Now send back the body.
-				//
-				io.Copy(res, bytes.NewReader(body))
-				return
-			}
+	// Try each blob-server in turn
+	for _, server := range libconfig.OrderedServers() {
+		if tryDownloadFromServer(server, id, res, req) {
+			return
 		}
 	}
 
-	//
-	// If we reach here we've attempted our download on every
-	// known blob-server and none succeeded.
-	//
-	// Let the caller know.
-	//
+	// If we reach here, no server succeeded
 	res.Header().Set("Connection", "close")
 	res.WriteHeader(http.StatusNotFound)
 }
 
 // APIMissingHandler is a fall-back handler for all requests which are
 // neither upload nor download.
-func APIMissingHandler(res http.ResponseWriter, req *http.Request) {
+func APIMissingHandler(res http.ResponseWriter, _ *http.Request) {
 	res.WriteHeader(http.StatusNotFound)
-	res.Write([]byte("Invalid method or location."))
+	if _, err := res.Write([]byte("Invalid method or location.")); err != nil {
+		panic(err)
+	}
 }
