@@ -220,8 +220,8 @@ func replicate(options replicateCmd) {
 	// "default" group.
 	//
 	if options.blob != "" {
-		servers := strings.Split(options.blob, ",")
-		for _, entry := range servers {
+		servers := strings.SplitSeq(options.blob, ",")
+		for entry := range servers {
 			libconfig.AddServer("default", entry)
 		}
 	} else {
