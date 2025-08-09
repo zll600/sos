@@ -29,7 +29,7 @@ If you're using `go` before 1.11 then the following command should fetch/update 
 
      $ go get -u github.com/skx/sos
 
-### Source installation go  >= 1.12
+### Source installation go  >= 1.24.5
 
 If you're using a more recent version of `go` (which is _highly_ recommended), you need to clone to a directory which is not present upon your `GOPATH`:
 

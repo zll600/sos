@@ -9,7 +9,6 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -23,9 +22,7 @@ import (
 // test if `-verbose` is in-force.
 var OPTIONS apiServerCmd
 
-//
 // Start the upload/download servers running.
-//
 func apiServer(options apiServerCmd) {
 
 	//
@@ -35,8 +32,8 @@ func apiServer(options apiServerCmd) {
 	// "default" group.
 	//
 	if options.blob != "" {
-		servers := strings.Split(options.blob, ",")
-		for _, entry := range servers {
+		servers := strings.SplitSeq(options.blob, ",")
+		for entry := range servers {
 			libconfig.AddServer("default", entry)
 		}
 	} else {
@@ -120,16 +117,12 @@ func apiServer(options apiServerCmd) {
 	wg.Wait()
 }
 
-//
 // This is a helper for allowing us to consume a HTTP-body more than once.
-///
 type myReader struct {
 	*bytes.Buffer
 }
 
-//
 // So that it implements the io.ReadCloser interface
-//
 func (m myReader) Close() error { return nil }
 
 // APIUploadHandler handles uploads to the API server.
@@ -141,21 +134,19 @@ func (m myReader) Close() error { return nil }
 // The retry logic is described in the file `SCALING.md` in the
 // repository, but in brief there are two cases:
 //
-//  * All the servers are in the group `default`.
+//   - All the servers are in the group `default`.
 //
-//  * There are N defined groups.
+//   - There are N defined groups.
 //
 // Both cases are handled by the call to OrderedServers() which
 // returns the known blob-servers in a suitable order to minimize
 // lookups.  See `SCALING.md` for more details.
-//
-//
 func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 
 	//
 	// We create a new buffer to hold the request-body.
 	//
-	buf, _ := ioutil.ReadAll(req.Body)
+	buf, _ := io.ReadAll(req.Body)
 
 	//
 	// Create a copy of the buffer, so that we can consume
@@ -167,7 +158,7 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 	// Get the SHA1 hash of the uploaded data.
 	//
 	hasher := sha1.New()
-	b, _ := ioutil.ReadAll(rdr1)
+	b, _ := io.ReadAll(rdr1)
 	hasher.Write([]byte(b))
 	hash := hasher.Sum(nil)
 
@@ -220,10 +211,10 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 			// We read the reply we received from the
 			// blob-server and return it to the caller.
 			//
-			response, _ := ioutil.ReadAll(r.Body)
+			response, _ := io.ReadAll(r.Body)
 
 			if response != nil {
-				fmt.Fprintf(res, string(response))
+				res.Write(response)
 				return
 			}
 		}
@@ -236,12 +227,9 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 	// Let the caller know.
 	//
 	res.WriteHeader(http.StatusInternalServerError)
-	fmt.Fprintf(res, "{\"error\":\"upload failed\"}")
-	return
-
+	res.Write([]byte("{\"error\":\"upload failed\"}"))
 }
 
-//
 // APIDownloadHandler handles downloads from the API server.
 //
 // This should attempt to download against the blob-servers and return
@@ -251,15 +239,13 @@ func APIUploadHandler(res http.ResponseWriter, req *http.Request) {
 // The retry logic is described in the file `SCALING.md` in the
 // repository, but in brief there are two cases:
 //
-//  * All the servers are in the group `default`.
+//   - All the servers are in the group `default`.
 //
-//  * There are N defined groups.
+//   - There are N defined groups.
 //
 // Both cases are handled by the call to OrderedServers() which
 // returns the known blob-servers in a suitable order to minimize
 // lookups.  See `SCALING.md` for more details.
-//
-//
 func APIDownloadHandler(res http.ResponseWriter, req *http.Request) {
 
 	//
@@ -327,7 +313,7 @@ func APIDownloadHandler(res http.ResponseWriter, req *http.Request) {
 			// We read the reply we received from the
 			// blob-server and return it to the caller.
 			//
-			body, _ := ioutil.ReadAll(response.Body)
+			body, _ := io.ReadAll(response.Body)
 
 			if body != nil {
 
@@ -388,5 +374,5 @@ func APIDownloadHandler(res http.ResponseWriter, req *http.Request) {
 // neither upload nor download.
 func APIMissingHandler(res http.ResponseWriter, req *http.Request) {
 	res.WriteHeader(http.StatusNotFound)
-	fmt.Fprintf(res, "Invalid method or location.")
+	res.Write([]byte("Invalid method or location."))
 }

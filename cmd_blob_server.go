@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"regexp"
 	"strings"
@@ -24,13 +23,12 @@ var STORAGE StorageHandler
 // HealthHandler is a status end-point which can be polled remotely
 // to test health.
 func HealthHandler(res http.ResponseWriter, req *http.Request) {
-	fmt.Fprintf(res, "alive")
+	res.Write([]byte("alive"))
 }
 
 // GetHandler allows a blob to be retrieved by name.
 //
 // This is called with requests like `GET /blob/XXXXXX`.
-//
 func GetHandler(res http.ResponseWriter, req *http.Request) {
 	var (
 		status int
@@ -95,23 +93,21 @@ func GetHandler(res http.ResponseWriter, req *http.Request) {
 		// The meta-data will be used to populate the HTTP-response
 		// headers.
 		//
-		if meta != nil {
-			for k, v := range meta {
+		for k, v := range meta {
 
-				//
-				// Special case to set the content-type
-				// of the returned value.
-				//
-				if k == "X-Mime-Type" {
-					res.Header().Set(k, v)
-					k = "Content-Type"
-				}
-
-				//
-				// Add the response header.
-				//
+			//
+			// Special case to set the content-type
+			// of the returned value.
+			//
+			if k == "X-Mime-Type" {
 				res.Header().Set(k, v)
+				k = "Content-Type"
 			}
+
+			//
+			// Add the response header.
+			//
+			res.Header().Set(k, v)
 		}
 		io.Copy(res, bytes.NewReader(*data))
 	}
@@ -139,9 +135,9 @@ func ListHandler(res http.ResponseWriter, req *http.Request) {
 	//
 	if len(list) > 0 {
 		mapB, _ := json.Marshal(list)
-		fmt.Fprintf(res, string(mapB))
+		res.Write(mapB)
 	} else {
-		fmt.Fprintf(res, "[]")
+		res.Write([]byte("[]"))
 	}
 }
 
@@ -182,7 +178,7 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	//
 	// Read the body of the request.
 	//
-	content, err := ioutil.ReadAll(req.Body)
+	content, err := io.ReadAll(req.Body)
 	if err != nil {
 		err = errors.New("failed to read body")
 		status = http.StatusInternalServerError
@@ -205,8 +201,7 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	//
 	// Store the body, via our interface.
 	//
-	result := STORAGE.Store(id, content, extras)
-	if result == false {
+	if ok := STORAGE.Store(id, content, extras); !ok {
 		err = errors.New("failed to write to storage")
 		status = http.StatusInternalServerError
 		return
@@ -221,7 +216,7 @@ func UploadHandler(res http.ResponseWriter, req *http.Request) {
 	//  }
 	//
 	out := fmt.Sprintf("{\"id\":\"%s\",\"status\":\"OK\",\"size\":%d}", id, len(content))
-	fmt.Fprintf(res, string(out))
+	res.Write([]byte(out))
 
 }
 
